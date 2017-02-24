@@ -28,6 +28,7 @@
 *.x86_64
 *.hex
 
-# Debug files
+# Debug and build files
 *.dSYM/
 *.su
+*.d
