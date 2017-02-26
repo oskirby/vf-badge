@@ -17,21 +17,16 @@
 ## along with this library.  If not, see <http://www.gnu.org/licenses/>.
 ##
 
-LIBNAME         = opencm3_stm32f0
-DEFS            += -DSTM32F0
-
-FP_FLAGS        ?= -msoft-float
-ARCH_FLAGS      = -mthumb -mcpu=cortex-m0 $(FP_FLAGS)
-
+DEVICE = stm32l011f3
+OPENCM3_DIR = libopencm3
 
 BINARY = vf-badge
 OBJS += src/apa102.o
-OBJS += src/at42qt1070.o
+#OBJS += src/at42qt1070.o
 OBJS += src/leds.o
 OBJS += src/schedule.o
-CFLAGS += -I src -Wno-unused-parameter
-
-LDSCRIPT = stm32f030f4.ld
+CFLAGS += -I src -I
+DEFS += -Wno-unused-parameter
 
 include rules.mk
 
@@ -40,8 +35,7 @@ clean: libclean
 .PHONY: $(OPENCM3_DIR) libclean
 $(OBJS): $(OPENCM3_DIR)
 $(OPENCM3_DIR):
-	make -C $(OPENCM3_DIR) TARGETS=stm32/f0
-
+	make -C $(OPENCM3_DIR) TARGETS=stm32/l0
 
 libclean:
 	make -C $(OPENCM3_DIR) clean

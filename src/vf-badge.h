@@ -9,6 +9,12 @@ void led_setup(void);
 void led_set_right(uint8_t value);
 void led_set_left(uint8_t value);
 
+/* Bits used for fixed-point math */
+#define FIXED_BITS          8
+#define FIXED_ONE           (1u << FIXED_BITS)
+#define FIXED_MAX           (FIXED_ONE - 1)
+#define FIXED_MUL(_a_, _b_) (((unsigned long)(_a_) * (unsigned long)(_b_)) >> FIXED_BITS)
+
 struct schedule;
 
 struct state {
