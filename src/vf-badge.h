@@ -35,6 +35,8 @@ struct schedule {
 void sched_tick(struct schedule *sched, unsigned long uptime);
 void sched_goto(struct schedule *sched, unsigned int state, unsigned long uptime);
 
+void delay_nsec(unsigned long nsec);
+
 void at42_setup(void);
 uint8_t at42_status(void);
 uint16_t at42_channel(uint8_t key);

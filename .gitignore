@@ -31,4 +31,5 @@
 # Debug and build files
 *.dSYM/
 *.su
+*.map
 *.d

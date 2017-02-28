@@ -30,7 +30,20 @@
 
 #include "vf-badge.h"
 
-#define PORT_LED GPIOA
+/* Very gross and I feel sad...  */
+void
+delay_nsec(unsigned long nsec)
+{
+    /* Should execute at 1IPC +1 on a predicted branch. */
+    unsigned long long cycles = ((unsigned long long)nsec * (unsigned long long)rcc_ahb_frequency) >> 2;
+    __asm volatile(
+        "delay_nsec_loop:           \n"
+        "sub %[cylo], %[billion]    \n"
+        "sbc %[cyhi], %[zero]       \n"
+        "bpl delay_nsec_loop        \n"
+        :: [cyhi]"r"(cycles >> 32), [cylo]"r"(cycles & 0xffffffff), [billion]"rI"(1000000000), [zero]"r"(0));
+}
+
 
 static void
 led_right_entry(struct schedule *sched, const struct state *state, unsigned long uptime, unsigned int value)
@@ -91,6 +104,7 @@ static struct schedule led_left_schedule = {
     .sm = led_left_sm,
 };
 
+
 /* The fastest we can go at the lowest core voltage. */
 static const struct rcc_clock_scale rcc_config = {
     .hpre = RCC_CFGR_HPRE_SYSCLK_NODIV,
@@ -116,21 +130,43 @@ static unsigned int hue = 0;
 static void
 rtc_wakeup(void)
 {
+    uint8_t keys;
+
     /* NOTE: the backup domain protection must be *DISABLED* for this to work. */
     rtc_clear_wakeup_flag();
     exti_reset_request(EXTI20);
 
     /* Update our timekeeping */
 	uptime += RTC_PERIOD_MSEC;
+    keys = at42_status();
 
     /* LED state machine */
     sched_tick(&led_right_schedule, uptime);
     sched_tick(&led_left_schedule, uptime);
 
-    /* Update the HSV sweep */
-    hue += FIXED_MUL(HUE_DEGREES_PER_MSEC, RTC_PERIOD_MSEC);
-    if (hue >= (360 << FIXED_BITS)) {
-        hue -= (360 << FIXED_BITS);
+    /* Update the HSV sweep - or override by key touch */
+    if (keys & (1<<0)) {
+        /* Treat the paw-pad separately. */
+        apa102_write_rgb(0xff, 0xff, 0xff, 0x40);
+        return;
+    }
+    else if (keys & (1<<1)) {
+        hue = (0 << FIXED_BITS);
+    }
+    else if (keys & (1<<2)) {
+        hue = (90 << FIXED_BITS);
+    }
+    else if (keys & (1<<3)) {
+        hue = (180 << FIXED_BITS);
+    }
+    else if (keys & (1<<4)) {
+        hue = (270 << FIXED_BITS);
+    }
+    else {
+        hue += FIXED_MUL(HUE_DEGREES_PER_MSEC, RTC_PERIOD_MSEC);
+        if (hue >= (360 << FIXED_BITS)) {
+            hue -= (360 << FIXED_BITS);
+        }
     }
     apa102_write_hsv(hue >> FIXED_BITS, 0xff, 0x40);
 } /* rtc_wakeup */
@@ -175,11 +211,17 @@ rtc_setup(void)
 
 int main(void)
 {
+    /* Ensure NRST gets asserted to ensure all peripherals get reset. */
+    if ((RCC_CSR & RCC_CSR_SFTRSTF) == 0) {
+        scb_reset_system();
+    }
+
     rcc_clock_setup_msi(&rcc_config);
     rcc_periph_clock_enable(RCC_GPIOA);
 
     led_setup();
     apa102_setup();
+    at42_setup();
 
     /* Start the blink state machines. */
     sched_goto(&led_right_schedule, 0, uptime);

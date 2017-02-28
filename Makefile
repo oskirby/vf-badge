@@ -22,7 +22,7 @@ OPENCM3_DIR = libopencm3
 
 BINARY = vf-badge
 OBJS += src/apa102.o
-#OBJS += src/at42qt1070.o
+OBJS += src/at42qt1070.o
 OBJS += src/leds.o
 OBJS += src/schedule.o
 CFLAGS += -I src -I
