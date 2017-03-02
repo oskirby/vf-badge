@@ -80,6 +80,8 @@
 /* Keep a cache of the first four registers. */
 static uint8_t at42_regs[4] = {0, 0, 0, 0};
 
+#define at42_exists() (at42_regs[AT42_REG_CHIP_ID] == AT42QT1070_CHIP_ID)
+
 static int
 at42_writeb(uint8_t reg, uint8_t val)
 {
@@ -146,9 +148,9 @@ at42_setup(void)
         /* Assign KEY0 to a secondary group for multitouch. */
         at42_writeb(AT42_REG_AVE_ASK_KEY(5), AT42_ASK_VALUE(1) | AT42_AVE_DEFAULT);
 
-        at42_writeb(AT42_REG_CAL_GUARD, 5); /* Set KEY0 as the guard channel. */
-        at42_writeb(AT42_REG_LOW_POWER, 4); /* Set update time to 32ms. */
-        at42_writeb(AT42_REG_CALIBRATE, 0xff);  /* (Re)start calibration. */
+        at42_writeb(AT42_REG_CAL_GUARD, 5); /* Set KEY5 as the guard channel. */
+        at42_writeb(AT42_REG_LOW_POWER, 5); /* Set update time to 64ms. */
+        at42_calibrate();                   /* (Re)start calibration. */
 
         /* Enable the change detect pin. */
         rcc_periph_clock_enable(RCC_GPIOB);
@@ -162,9 +164,23 @@ at42_setup(void)
 } /* at42_setup */
 
 uint8_t
+at42_change(void)
+{
+    return (at42_exists() && (gpio_get(AT42_PORT_CHANGE, AT42_PIN_CHANGE) == 0));
+} /* at42_change */
+
+void
+at42_calibrate(void)
+{
+    if (at42_exists()) {
+        at42_writeb(AT42_REG_CALIBRATE, 0xff);
+    }
+} /* at42_calibrate */
+
+uint8_t
 at42_status(void)
 {
-    if ((at42_regs[AT42_REG_CHIP_ID] == AT42QT1070_CHIP_ID) && (gpio_get(AT42_PORT_CHANGE, AT42_PIN_CHANGE) == 0)) {
+    if (at42_change()) {
         at42_read(AT42_REG_DETECT_STATUS, &at42_regs[AT42_REG_DETECT_STATUS], 2);
     }
     return at42_regs[AT42_REG_KEY_STATUS];
@@ -173,7 +189,7 @@ at42_status(void)
 uint16_t
 at42_channel(uint8_t key)
 {
-    if (at42_regs[AT42_REG_CHIP_ID] == AT42QT1070_CHIP_ID) {
+    if (at42_exists()) {
         uint8_t data[2];
         at42_read(AT42_REG_KEY_SIGNAL(key), data, sizeof(data));
         return (data[0] << 8) | data[1];

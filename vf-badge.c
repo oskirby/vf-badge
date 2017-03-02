@@ -1,24 +1,3 @@
-/*
- * This file is part of the libopencm3 project.
- *
- * Copyright (C) 2009 Uwe Hermann <uwe@hermann-uwe.de>
- * Copyright (C) 2011 Stephen Caudle <scaudle@doceme.com>
- * Copyright (C) 2012 Karl Palsson <karlp@tweak.net.au>
- *
- * This library is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this library.  If not, see <http://www.gnu.org/licenses/>.
- */
-
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/flash.h>
 #include <libopencm3/stm32/gpio.h>
@@ -34,7 +13,7 @@
 void
 delay_nsec(unsigned long nsec)
 {
-    /* Should execute at 1IPC +1 on a predicted branch. */
+    /* Cortex-M series should execute at 1IPC (+1 on a predicted branch). */
     unsigned long long cycles = ((unsigned long long)nsec * (unsigned long long)rcc_ahb_frequency) >> 2;
     __asm volatile(
         "delay_nsec_loop:           \n"
@@ -44,131 +23,191 @@ delay_nsec(unsigned long nsec)
         :: [cyhi]"r"(cycles >> 32), [cylo]"r"(cycles & 0xffffffff), [billion]"rI"(1000000000), [zero]"r"(0));
 }
 
+/*---------------------------------------------------------
+ * Right LED state machine
+ *---------------------------------------------------------
+ */
+enum led_right_states {
+    LED_RIGHT_PAUSE = 0,
+    LED_RIGHT_BLINK0,
+    LED_RIGHT_BLINK1,
+    LED_RIGHT_BLINK2
+};
 
 static void
-led_right_entry(struct schedule *sched, const struct state *state, unsigned long uptime, unsigned int value)
+led_right_blink(struct schedule *sched, const struct state *state, unsigned long uptime)
 {
-    led_set_right(value);
-} /* led_right_entry */
-
-static void
-led_left_entry(struct schedule *sched, const struct state *state, unsigned long uptime, unsigned int value)
-{
-    led_set_left(value);
-} /* led_right_entry */
-
-static void
-led_left_rampup(struct schedule *sched, const struct state *state, unsigned long uptime, unsigned int value)
-{
-    unsigned int x = FIXED_MUL(value, (uptime - sched->start));
-    if (x > 0xff) {
-        sched_goto(sched, 2, uptime);
-    }
-    else {
-        led_set_left(x);
-    }
-} /* led_left_rampup */
-
-static void
-led_left_rampdown(struct schedule *sched, const struct state *state, unsigned long uptime, unsigned int value)
-{
-    unsigned int x = FIXED_MUL(value, (uptime - sched->start));
-    if (x > 0xff) {
-        sched_goto(sched, 0, uptime);
-    }
-    else {
-        led_set_left(0xff - x);
-    }
-} /* led_left_rampdown */
+    led_set_right(((uptime - sched->start) < state->value) ? 0xff : 0);
+} /* led_right_blink */
 
 /* Tripple blink and pause. */
 static const struct state led_right_sm[] = {
-    {.next = 1, .duration = 50, .value = 0xff, .entry = led_right_entry},
-    {.next = 2, .duration = 70, .value = 0x00, .entry = led_right_entry},
-    {.next = 3, .duration = 50, .value = 0xff, .entry = led_right_entry},
-    {.next = 4, .duration = 70, .value = 0x00, .entry = led_right_entry},
-    {.next = 5, .duration = 50, .value = 0xff, .entry = led_right_entry},
-    {.next = 0, .duration = 1500, .value = 0x00, .entry = led_right_entry}
+    [LED_RIGHT_PAUSE] = {.next = LED_RIGHT_BLINK0, .duration = 1500, .value = 0, .tick = led_right_blink},
+    [LED_RIGHT_BLINK0] = {.next = LED_RIGHT_BLINK1, .duration = 120, .value = 50, .tick = led_right_blink},
+    [LED_RIGHT_BLINK1] = {.next = LED_RIGHT_BLINK2, .duration = 120, .value = 50, .tick = led_right_blink},
+    [LED_RIGHT_BLINK2] = {.next = LED_RIGHT_PAUSE, .duration = 120, .value = 50, .tick = led_right_blink},
 };
 static struct schedule led_right_schedule = {
     .sm = led_right_sm,
 };
 
+/*---------------------------------------------------------
+ * Left LED state machine
+ *---------------------------------------------------------
+ */
+enum led_left_states {
+    LED_LEFT_OFF = 0,
+    LED_LEFT_PULSE,
+};
+
+static void
+led_left_entry(struct schedule *sched, const struct state *state, unsigned long uptime)
+{
+    led_set_left(state->value);
+} /* led_right_entry */
+
+static void
+led_left_pulse(struct schedule *sched, const struct state *state, unsigned long uptime)
+{
+    unsigned int x = FIXED_MUL(state->value, (uptime - sched->start));
+    if (x <= 0xff) {
+        led_set_left(x);
+    }
+    else if (x <= 0x1ff) {
+        led_set_left(0xff - (x & 0xff));
+    }
+    else {
+        sched_goto(sched, LED_LEFT_OFF, uptime);
+    }
+} /* led_left_pulse */
+
 /* Pulse the left LED on with a soft ramp up/down. */
 static const struct state led_left_sm[] = {
-    {.next = 1, .duration = 2000, .value = 0, .entry = led_left_entry},
-    {.next = 0, .duration = 0, .value = FIXED_ONE / 5, .tick = led_left_rampup},
-    {.next = 0, .duration = 0, .value = FIXED_ONE / 5, .tick = led_left_rampdown},
+    [LED_LEFT_PULSE] = {.next = LED_LEFT_OFF, .duration = 0, .value = FIXED_ONE / 5, .tick = led_left_pulse},
+    [LED_LEFT_OFF] = {.next = LED_LEFT_PULSE, .duration = 2000, .value = 0, .entry = led_left_entry},
 };
 static struct schedule led_left_schedule = {
     .sm = led_left_sm,
 };
 
+/*---------------------------------------------------------
+ * RGB LED state machine
+ *---------------------------------------------------------
+ */
+#define RGB_IDLE_VALUE  0x20
+#define RGB_SATURATION  UINT8_MAX
+#define RGB_PULSE_RATE  (FIXED_ONE / 4)
 
-/* The fastest we can go at the lowest core voltage. */
-static const struct rcc_clock_scale rcc_config = {
-    .hpre = RCC_CFGR_HPRE_SYSCLK_NODIV,
-    .ppre1 = RCC_CFGR_PPRE1_HCLK_NODIV,
-    .ppre2 = RCC_CFGR_PPRE2_HCLK_NODIV,
-    .voltage_scale = PWR_SCALE3,
-    .flash_config = FLASH_ACR_LATENCY_0WS,
-    .ahb_frequency	= 4194000,
-    .apb1_frequency = 4194000,
-    .apb2_frequency = 4194000,
-    .msi_range = RCC_ICSCR_MSIRANGE_4MHZ,
+/* TODO: It would be nice to have a soft transition back to the
+ * idle state after releasing a key.
+ */
+enum led_rgb_states {
+    RGB_STATE_IDLE = 0,
+    RGB_STATE_KEY0,
+    RGB_STATE_KEY1,
+    RGB_STATE_KEY2,
+    RGB_STATE_KEY3,
+    RGB_STATE_KEY4,
 };
+
+static unsigned int hue = 0;
+
+static void
+rgb_sweep_tick(struct schedule *sched, const struct state *state, unsigned long uptime)
+{
+    hue += FIXED_MUL(state->value, uptime - sched->prevtick);
+    if (hue >= (360 << FIXED_BITS)) {
+        hue -= (360 << FIXED_BITS);
+    }
+    apa102_write_hsv(hue >> FIXED_BITS, RGB_SATURATION, RGB_IDLE_VALUE);
+} /* rgb_sweep_tick */
+
+static void
+rgb_pulse_tick(struct schedule *sched, const struct state *state, unsigned long uptime)
+{
+    unsigned int x = FIXED_MUL(RGB_PULSE_RATE, (uptime - sched->start));
+    if (x & 0x100) {
+        apa102_write_hsv(state->value, RGB_SATURATION, 0xff - (x & 0xff));
+    } else {
+        apa102_write_hsv(state->value, RGB_SATURATION, (x & 0xff));
+    }
+    /* Reset the hue target so the HSV sweep resumes from here. */
+    hue = state->value << FIXED_BITS;
+} /* rgb_pulse_tick */
+
+static const struct state led_rgb_sm[] = {
+    /* Idle behaviour is to sweep the hue through its range. */
+    [RGB_STATE_IDLE] = {.next = 0, .duration = 0, .value = FIXED_ONE * 10, .tick = rgb_sweep_tick},
+    [RGB_STATE_KEY0] = {.next = 0, .duration = 0, .value = FIXED_ONE * 70, .tick = rgb_sweep_tick},
+    /* States for pulsing the LED on and off at a fixed hue while keys are set. */
+    [RGB_STATE_KEY1] = {.next = 0, .duration = 0, .value = 0, .tick = rgb_pulse_tick},
+    [RGB_STATE_KEY2] = {.next = 0, .duration = 0, .value = 90, .tick = rgb_pulse_tick},
+    [RGB_STATE_KEY3] = {.next = 0, .duration = 0, .value = 180, .tick = rgb_pulse_tick},
+    [RGB_STATE_KEY4] = {.next = 0, .duration = 0, .value = 270, .tick = rgb_pulse_tick},
+};
+static struct schedule led_rgb_schedule = {
+    .sm = led_rgb_sm,
+};
+
+/*---------------------------------------------------------
+ * Realtime Clock and Application Logic
+ *---------------------------------------------------------
+ */
 
 /* RTC Wakeup period */
 #define RTC_PERIOD_MSEC         20
 
-/* Hue rate change per millisecond (in degrees) */
-#define HUE_DEGREES_PER_MSEC    (FIXED_ONE * 10)
-
 static unsigned long uptime = 0;
-static unsigned int hue = 0;
+static unsigned long at42_timestamp = 0;
 
 static void
 rtc_wakeup(void)
 {
-    uint8_t keys;
-
     /* NOTE: the backup domain protection must be *DISABLED* for this to work. */
     rtc_clear_wakeup_flag();
     exti_reset_request(EXTI20);
 
     /* Update our timekeeping */
 	uptime += RTC_PERIOD_MSEC;
-    keys = at42_status();
 
-    /* LED state machine */
-    sched_tick(&led_right_schedule, uptime);
-    sched_tick(&led_left_schedule, uptime);
+    /* Handle changes in the capacative touch state. */
+    if (at42_change()) {
+        uint8_t keys = at42_status();
+        at42_timestamp = uptime;
 
-    /* Update the HSV sweep - or override by key touch */
-    if (keys & (1<<0)) {
-        /* Treat the paw-pad separately. */
-        apa102_write_rgb(0xff, 0xff, 0xff, 0x40);
-        return;
-    }
-    else if (keys & (1<<1)) {
-        hue = (0 << FIXED_BITS);
-    }
-    else if (keys & (1<<2)) {
-        hue = (90 << FIXED_BITS);
-    }
-    else if (keys & (1<<3)) {
-        hue = (180 << FIXED_BITS);
-    }
-    else if (keys & (1<<4)) {
-        hue = (270 << FIXED_BITS);
-    }
-    else {
-        hue += FIXED_MUL(HUE_DEGREES_PER_MSEC, RTC_PERIOD_MSEC);
-        if (hue >= (360 << FIXED_BITS)) {
-            hue -= (360 << FIXED_BITS);
+        /* Jump states based on which keys are now set. */
+        if (keys & (1<<0)) {
+            sched_goto(&led_rgb_schedule, RGB_STATE_KEY0, uptime);
+        }
+        else if (keys & (1<<1)) {
+            sched_goto(&led_rgb_schedule, RGB_STATE_KEY1, uptime);
+        }
+        else if (keys & (1<<2)) {
+            sched_goto(&led_rgb_schedule, RGB_STATE_KEY2, uptime);
+        }
+        else if (keys & (1<<3)) {
+            sched_goto(&led_rgb_schedule, RGB_STATE_KEY3, uptime);
+        }
+        else if (keys & (1<<4)) {
+            sched_goto(&led_rgb_schedule, RGB_STATE_KEY4, uptime);
+        }
+        else {
+            sched_goto(&led_rgb_schedule, RGB_STATE_IDLE, uptime);
         }
     }
-    apa102_write_hsv(hue >> FIXED_BITS, 0xff, 0x40);
+    /*
+     * If more than 5 minutes elapses without a key change, then
+     * recalibrate the AT42 touch controller.
+     */
+    else if ((uptime - at42_timestamp) > (5 * 60 * 1000)) {
+        at42_calibrate();
+        at42_timestamp = uptime;
+    }
+
+    /* Run the LED state machines */
+    sched_tick(&led_right_schedule, uptime);
+    sched_tick(&led_left_schedule, uptime);
+    sched_tick(&led_rgb_schedule, uptime);
 } /* rtc_wakeup */
 
 void
@@ -209,6 +248,19 @@ rtc_setup(void)
     exti_enable_request(EXTI20);
 } /* rtc_setup */
 
+/* The fastest we can go at the lowest core voltage. */
+static const struct rcc_clock_scale rcc_config = {
+    .hpre = RCC_CFGR_HPRE_SYSCLK_NODIV,
+    .ppre1 = RCC_CFGR_PPRE1_HCLK_NODIV,
+    .ppre2 = RCC_CFGR_PPRE2_HCLK_NODIV,
+    .voltage_scale = PWR_SCALE3,
+    .flash_config = FLASH_ACR_LATENCY_0WS,
+    .ahb_frequency	= 4194000,
+    .apb1_frequency = 4194000,
+    .apb2_frequency = 4194000,
+    .msi_range = RCC_ICSCR_MSIRANGE_4MHZ,
+};
+
 int main(void)
 {
     /* Ensure NRST gets asserted to ensure all peripherals get reset. */
@@ -224,8 +276,9 @@ int main(void)
     at42_setup();
 
     /* Start the blink state machines. */
-    sched_goto(&led_right_schedule, 0, uptime);
-    sched_goto(&led_left_schedule, 0, uptime);
+    sched_goto(&led_right_schedule, LED_RIGHT_PAUSE, uptime);
+    sched_goto(&led_left_schedule, LED_LEFT_PULSE, uptime);
+    sched_goto(&led_rgb_schedule, RGB_STATE_IDLE, uptime);
 
     /* Start the RTC wakeup timer. */
     cm_enable_interrupts();
@@ -243,4 +296,3 @@ int main(void)
 
     return 0;
 } /* main */
-

@@ -21,12 +21,13 @@ struct state {
     unsigned int next;      /* Next state number on timeout. */
     unsigned int duration;  /* Current state duration, in ticks, or zero for infinity.  */
     unsigned int value;     /* Argument passed to the entry/tick callbacks. */
-	void (*entry)(struct schedule *, const struct state *state, unsigned long uptime, unsigned int value);
-	void (*tick)(struct schedule *, const struct state *state, unsigned long uptime, unsigned int value);
+	void (*entry)(struct schedule *, const struct state *state, unsigned long uptime);
+	void (*tick)(struct schedule *, const struct state *state, unsigned long uptime);
 };
 
 struct schedule {
-	unsigned long start;    /* Current state start time. */
+    unsigned long start;    /* Current state start time. */
+    unsigned long prevtick; /* Uptime of previous tick. */
     unsigned int state;     /* Current state number. */
     const struct state *sm; /* Array of state structures. */
 };
@@ -38,5 +39,7 @@ void sched_goto(struct schedule *sched, unsigned int state, unsigned long uptime
 void delay_nsec(unsigned long nsec);
 
 void at42_setup(void);
+void at42_calibrate(void);
+uint8_t at42_change(void);
 uint8_t at42_status(void);
 uint16_t at42_channel(uint8_t key);
