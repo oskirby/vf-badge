@@ -43,3 +43,14 @@ void at42_calibrate(void);
 uint8_t at42_change(void);
 uint8_t at42_status(void);
 uint16_t at42_channel(uint8_t key);
+
+/* Morse encoding */
+struct morse {
+    uint8_t len;    /* Length of the code in bits. */
+    uint8_t code;   /* Bitmask of symbols (0=dot 1=dash). */
+};
+struct morse morse_encode(char c);
+
+/* Get the next symbol of morse code (dash or dot) and decrement the symbol length. */
+#define morse_next_bit(_m_) \
+    (((_m_)->code >> ((_m_)->len ? --(_m_)->len : (_m_)->len)) & 0x1)

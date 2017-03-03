@@ -25,6 +25,7 @@ OBJS += src/apa102.o
 OBJS += src/at42qt1070.o
 OBJS += src/leds.o
 OBJS += src/schedule.o
+OBJS += src/morse.o
 CFLAGS += -I src -I
 DEFS += -Wno-unused-parameter
 

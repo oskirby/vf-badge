@@ -27,11 +27,20 @@ delay_nsec(unsigned long nsec)
  * Right LED state machine
  *---------------------------------------------------------
  */
+#define MORSE_DOT_MSEC  100
+
 enum led_right_states {
+    /* Normal blinking states. */
     LED_RIGHT_PAUSE = 0,
     LED_RIGHT_BLINK0,
     LED_RIGHT_BLINK1,
-    LED_RIGHT_BLINK2
+    LED_RIGHT_BLINK2,
+    /* Morse coding states. */
+    LED_MORSE_DOT,
+    LED_MORSE_DASH,
+    LED_MORSE_CHAR_SPACE,
+    LED_MORSE_WORD_SPACE,
+    LED_MORSE_NEXTBIT,
 };
 
 static void
@@ -40,16 +49,60 @@ led_right_blink(struct schedule *sched, const struct state *state, unsigned long
     led_set_right(((uptime - sched->start) < state->value) ? 0xff : 0);
 } /* led_right_blink */
 
+/* The morse string to output */
+static const char *morse_string = "";
+
+static void
+led_right_morse(struct schedule *sched, const struct state *state, unsigned long uptime)
+{
+    static struct morse code;
+
+    /* Output morse code bits. */
+    if (code.len) {
+        int bit = morse_next_bit(&code);
+        sched_goto(sched,  bit ? LED_MORSE_DASH : LED_MORSE_DOT, uptime);
+        return;
+    }
+
+    /* Get the next character to determine the upcoming state. */
+    if (*morse_string  == '\0') {
+        sched_goto(sched, LED_RIGHT_PAUSE, uptime);
+    }
+    else if (*morse_string == ' ') {
+        morse_string++;
+        sched_goto(sched, LED_MORSE_WORD_SPACE, uptime);
+    }
+    else {
+        code = morse_encode(*morse_string++);
+        sched_goto(sched, LED_MORSE_CHAR_SPACE, uptime);
+    }
+} /* led_right_morse */
+
+
 /* Tripple blink and pause. */
 static const struct state led_right_sm[] = {
     [LED_RIGHT_PAUSE] = {.next = LED_RIGHT_BLINK0, .duration = 1500, .value = 0, .tick = led_right_blink},
     [LED_RIGHT_BLINK0] = {.next = LED_RIGHT_BLINK1, .duration = 120, .value = 50, .tick = led_right_blink},
     [LED_RIGHT_BLINK1] = {.next = LED_RIGHT_BLINK2, .duration = 120, .value = 50, .tick = led_right_blink},
     [LED_RIGHT_BLINK2] = {.next = LED_RIGHT_PAUSE, .duration = 120, .value = 50, .tick = led_right_blink},
+    /* Morse coding states. */
+    [LED_MORSE_DOT] = {.next = LED_MORSE_NEXTBIT, .duration = MORSE_DOT_MSEC*2, .value = MORSE_DOT_MSEC, .tick = led_right_blink},
+    [LED_MORSE_DASH] = {.next = LED_MORSE_NEXTBIT, .duration = MORSE_DOT_MSEC*4, .value = MORSE_DOT_MSEC*3, .tick = led_right_blink},
+    [LED_MORSE_CHAR_SPACE] = {.next = LED_MORSE_NEXTBIT, .duration = MORSE_DOT_MSEC*3, .value = 0, .tick = led_right_blink},
+    [LED_MORSE_WORD_SPACE] = {.next = LED_MORSE_NEXTBIT, .duration = MORSE_DOT_MSEC*7, .value = 0, .tick = led_right_blink},
+    [LED_MORSE_NEXTBIT] = {.next = LED_RIGHT_PAUSE, .duration = 0, .value = 0, .entry = led_right_morse},
 };
 static struct schedule led_right_schedule = {
     .sm = led_right_sm,
 };
+
+/* Jump to the morse coding state to begin output. */
+static void
+led_start_morse(const char *str, unsigned long uptime)
+{
+    morse_string = str;
+    sched_goto(&led_right_schedule, LED_MORSE_WORD_SPACE, uptime);
+} /* led_start_morse */
 
 /*---------------------------------------------------------
  * Left LED state machine
@@ -210,11 +263,14 @@ rtc_wakeup(void)
     sched_tick(&led_rgb_schedule, uptime);
 } /* rtc_wakeup */
 
+/* TODO: Can improve latency by moving this into the main() loop
+ * and running without the interrupts stacking/unstacking delay.
+ */
 void
 rtc_isr(void)
 {
     rtc_wakeup();
-}
+} /* rtc_isr */
 
 static void
 rtc_setup(void)
@@ -248,21 +304,21 @@ rtc_setup(void)
     exti_enable_request(EXTI20);
 } /* rtc_setup */
 
-/* The fastest we can go at the lowest core voltage. */
-static const struct rcc_clock_scale rcc_config = {
-    .hpre = RCC_CFGR_HPRE_SYSCLK_NODIV,
-    .ppre1 = RCC_CFGR_PPRE1_HCLK_NODIV,
-    .ppre2 = RCC_CFGR_PPRE2_HCLK_NODIV,
-    .voltage_scale = PWR_SCALE3,
-    .flash_config = FLASH_ACR_LATENCY_0WS,
-    .ahb_frequency	= 4194000,
-    .apb1_frequency = 4194000,
-    .apb2_frequency = 4194000,
-    .msi_range = RCC_ICSCR_MSIRANGE_4MHZ,
-};
-
 int main(void)
 {
+    /* The fastest we can go at the lowest core voltage. */
+    const struct rcc_clock_scale rcc_config = {
+        .hpre = RCC_CFGR_HPRE_SYSCLK_NODIV,
+        .ppre1 = RCC_CFGR_PPRE1_HCLK_NODIV,
+        .ppre2 = RCC_CFGR_PPRE2_HCLK_NODIV,
+        .voltage_scale = PWR_SCALE3,
+        .flash_config = FLASH_ACR_LATENCY_0WS,
+        .ahb_frequency	= 4194000,
+        .apb1_frequency = 4194000,
+        .apb2_frequency = 4194000,
+        .msi_range = RCC_ICSCR_MSIRANGE_4MHZ,
+    };
+
     /* Ensure NRST gets asserted to ensure all peripherals get reset. */
     if ((RCC_CSR & RCC_CSR_SFTRSTF) == 0) {
         scb_reset_system();
@@ -276,7 +332,7 @@ int main(void)
     at42_setup();
 
     /* Start the blink state machines. */
-    sched_goto(&led_right_schedule, LED_RIGHT_PAUSE, uptime);
+    led_start_morse("Vancoufur 2017", uptime);
     sched_goto(&led_left_schedule, LED_LEFT_PULSE, uptime);
     sched_goto(&led_rgb_schedule, RGB_STATE_IDLE, uptime);
 
