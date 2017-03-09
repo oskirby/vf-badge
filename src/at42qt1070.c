@@ -146,7 +146,7 @@ at42_setup(void)
     /* Setup the initial calibration. */
     if (at42_regs[AT42_REG_CHIP_ID] == AT42QT1070_CHIP_ID) {
         /* Assign KEY0 to a secondary group for multitouch. */
-        at42_writeb(AT42_REG_AVE_ASK_KEY(5), AT42_ASK_VALUE(1) | AT42_AVE_DEFAULT);
+        at42_writeb(AT42_REG_AVE_ASK_KEY(0), AT42_ASK_VALUE(1) | AT42_AVE_DEFAULT);
 
         at42_writeb(AT42_REG_CAL_GUARD, 5); /* Set KEY5 as the guard channel. */
         at42_writeb(AT42_REG_LOW_POWER, 5); /* Set update time to 64ms. */

@@ -27,7 +27,9 @@ delay_nsec(unsigned long nsec)
  * Right LED state machine
  *---------------------------------------------------------
  */
-#define MORSE_DOT_MSEC  100
+const char *hello_world = "Zebra";
+
+#define MORSE_DOT_MSEC  120
 
 enum led_right_states {
     /* Normal blinking states. */
@@ -78,13 +80,12 @@ led_right_morse(struct schedule *sched, const struct state *state, unsigned long
     }
 } /* led_right_morse */
 
-
 /* Tripple blink and pause. */
 static const struct state led_right_sm[] = {
-    [LED_RIGHT_PAUSE] = {.next = LED_RIGHT_BLINK0, .duration = 1500, .value = 0, .tick = led_right_blink},
-    [LED_RIGHT_BLINK0] = {.next = LED_RIGHT_BLINK1, .duration = 120, .value = 50, .tick = led_right_blink},
-    [LED_RIGHT_BLINK1] = {.next = LED_RIGHT_BLINK2, .duration = 120, .value = 50, .tick = led_right_blink},
-    [LED_RIGHT_BLINK2] = {.next = LED_RIGHT_PAUSE, .duration = 120, .value = 50, .tick = led_right_blink},
+    [LED_RIGHT_PAUSE] = {.next = LED_RIGHT_BLINK0, .duration = 4500, .value = 0, .tick = led_right_blink},
+    [LED_RIGHT_BLINK0] = {.next = LED_RIGHT_BLINK1, .duration = 250, .value = 100, .tick = led_right_blink},
+    [LED_RIGHT_BLINK1] = {.next = LED_RIGHT_PAUSE, .duration = 250, .value = 100, .tick = led_right_blink},
+    [LED_RIGHT_BLINK2] = {.next = LED_RIGHT_PAUSE, .duration = 200, .value = 80, .tick = led_right_blink},
     /* Morse coding states. */
     [LED_MORSE_DOT] = {.next = LED_MORSE_NEXTBIT, .duration = MORSE_DOT_MSEC*2, .value = MORSE_DOT_MSEC, .tick = led_right_blink},
     [LED_MORSE_DASH] = {.next = LED_MORSE_NEXTBIT, .duration = MORSE_DOT_MSEC*4, .value = MORSE_DOT_MSEC*3, .tick = led_right_blink},
@@ -147,7 +148,7 @@ static struct schedule led_left_schedule = {
  * RGB LED state machine
  *---------------------------------------------------------
  */
-#define RGB_IDLE_VALUE  0x20
+#define RGB_IDLE_VALUE  0x30
 #define RGB_SATURATION  UINT8_MAX
 #define RGB_PULSE_RATE  (FIXED_ONE / 4)
 
@@ -190,7 +191,7 @@ rgb_pulse_tick(struct schedule *sched, const struct state *state, unsigned long 
 
 static const struct state led_rgb_sm[] = {
     /* Idle behaviour is to sweep the hue through its range. */
-    [RGB_STATE_IDLE] = {.next = 0, .duration = 0, .value = FIXED_ONE * 10, .tick = rgb_sweep_tick},
+    [RGB_STATE_IDLE] = {.next = 0, .duration = 0, .value = FIXED_ONE * 5, .tick = rgb_sweep_tick},
     [RGB_STATE_KEY0] = {.next = 0, .duration = 0, .value = FIXED_ONE * 70, .tick = rgb_sweep_tick},
     /* States for pulsing the LED on and off at a fixed hue while keys are set. */
     [RGB_STATE_KEY1] = {.next = 0, .duration = 0, .value = 0, .tick = rgb_pulse_tick},
@@ -250,11 +251,13 @@ rtc_wakeup(void)
     }
     /*
      * If more than 5 minutes elapses without a key change, then
-     * recalibrate the AT42 touch controller.
+     * recalibrate the AT42 touch controller, and start blinking out
+     * some morse.
      */
     else if ((uptime - at42_timestamp) > (5 * 60 * 1000)) {
         at42_calibrate();
         at42_timestamp = uptime;
+        led_start_morse(hello_world, uptime);
     }
 
     /* Run the LED state machines */
@@ -332,7 +335,7 @@ int main(void)
     at42_setup();
 
     /* Start the blink state machines. */
-    led_start_morse("Vancoufur 2017", uptime);
+    led_start_morse(hello_world, uptime);
     sched_goto(&led_left_schedule, LED_LEFT_PULSE, uptime);
     sched_goto(&led_rgb_schedule, RGB_STATE_IDLE, uptime);
 
