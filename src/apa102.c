@@ -99,6 +99,11 @@ apa102_write_rgb(uint8_t red, uint8_t green, uint8_t blue, uint8_t value)
 #endif
         0xff, /* end frame. */
     };
+    if (value) {
+        gpio_set(APA102_PORT, APA102_PIN_VREG);
+    } else {
+        gpio_clear(APA102_PORT, APA102_PIN_VREG);
+    }
     apa102_write(data, sizeof(data));
 } /* apa102_write_rgb */
 
